@@ -1,3 +1,2 @@
 curl-cffi
-beautifulsoup4
 pycryptodome

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import curses
+from functools import lru_cache
 import re
 import shutil
 import sqlite3
@@ -14,7 +15,6 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 try:
-    from bs4 import BeautifulSoup
     from Crypto.Cipher import AES
     from curl_cffi import CurlOpt
     from curl_cffi.requests import Session
@@ -36,10 +36,7 @@ DOWNLOADS = Path.home() / "Downloads"
 THREADS = 4
 
 
-class ChallengeError(RuntimeError):
-    pass
-
-
+@lru_cache(maxsize=1)
 def firefox_cookies() -> tuple[dict[str, str], dict[str, str]]:
     root = Path.home() / ".config" / "mozilla" / "firefox"
     databases = list(root.rglob("cookies.sqlite")) if root.exists() else []
@@ -77,7 +74,7 @@ class Client:
         )
 
     def get(self, url: str, referer: str | None = None, raw: bool = False):
-        headers = dict(HEADERS)
+        headers = HEADERS.copy()
         cookies = cookie_header(url)
         if cookies:
             headers["Cookie"] = cookies
@@ -99,12 +96,10 @@ class Client:
                 body_lower = body.lower()
                 challenge = response.status_code == 403 or response.headers.get("cf-mitigated") == "challenge" or b"<title>just a moment" in body_lower or b"cf-chl-widget" in body_lower or b"challenge-error-text" in body_lower
                 if challenge:
-                    raise ChallengeError("AnimePahe returned a Cloudflare challenge")
+                    raise RuntimeError("AnimePahe returned a Cloudflare challenge")
                 if response.status_code == 200 or raw:
                     return response
                 last_error = RuntimeError(f"HTTP {response.status_code}: {url}")
-            except ChallengeError:
-                raise
             except (RequestException, OSError, RuntimeError) as exc:
                 last_error = exc
             if attempt < 2:
@@ -138,18 +133,16 @@ def episodes(client: Client, session: str) -> list[dict]:
 def stream_links(client: Client, anime_session: str, episode_session: str) -> list[dict]:
     url = f"{BASE_URL}/play/{anime_session}/{episode_session}"
     html = client.get(url, f"{BASE_URL}/").text
-    soup = BeautifulSoup(html, "html.parser")
+    pattern = r'<(?:a|button)\s+[^>]*(?:href|src|data-src|data-url)=["\']([^"\']*kwik[^"\']*)["\'][^>]*>(.*?)</(?:a|button)>'
     links = []
-    for tag in soup.find_all(["a", "button"]):
-        target = tag.get("href") or tag.get("src") or tag.get("data-src") or tag.get("data-url")
-        if not isinstance(target, str) or "kwik" not in target.lower():
-            continue
-        label = tag.get_text(" ", strip=True)
-        match = re.search(r"(\d{3,4}p)", label or target, re.IGNORECASE)
+    for match in re.finditer(pattern, html, re.IGNORECASE | re.DOTALL):
+        target, label_html = match.groups()
+        label = re.sub(r"<[^>]+>", " ", label_html).strip()
+        quality_match = re.search(r"(\d{3,4}p)", label or target, re.IGNORECASE)
         links.append(
             {
                 "url": target,
-                "quality": match.group(1).lower() if match else "unknown",
+                "quality": quality_match.group(1).lower() if quality_match else "unknown",
                 "audio": "dub" if "dub" in label.lower() else "sub",
             }
         )
@@ -190,10 +183,9 @@ def m3u8_url(client: Client, kwik: str, referer: str) -> str:
     direct = re.search(r"https?://[^\s\"'<>\\;]+\.m3u8[^\s\"'<>\\;]*", html)
     if direct:
         return direct.group().rstrip("\\'\"")
-    soup = BeautifulSoup(html, "html.parser")
     packed = re.compile(r"\}\s*\('(.*?)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'(.*?)'", re.DOTALL)
-    for script in soup.find_all("script"):
-        for match in packed.finditer(script.string or ""):
+    for script in re.findall(r"<script[^>]*>(.*?)</script>", html, re.DOTALL | re.IGNORECASE):
+        for match in packed.finditer(script):
             decoded = unpack_js(match.group(1), int(match.group(2)), int(match.group(3)), match.group(4).split("|"))
             direct = re.search(r"https?://[^\s\"'<>\\;]+\.m3u8[^\s\"'<>\\;]*", decoded)
             if direct:
@@ -247,46 +239,29 @@ def download(client: Client, url: str, output: Path, referer: str, progress) -> 
     if key is not None and len(key) != 16:
         raise RuntimeError("Invalid AES key")
 
-    temporary = output.parent / f".{output.stem}.segments"
-    if temporary.exists():
-        shutil.rmtree(temporary)
-    temporary.mkdir(parents=True)
+    def fetch(item: tuple[int, str]) -> tuple[int, bytes]:
+        index, segment_url = item
+        data = client.get(segment_url, referer).content
+        if not data or data.startswith((b"<!DOCTYPE", b"<html")):
+            raise RuntimeError("segment response was not media")
+        if key:
+            data = AES.new(key, AES.MODE_CBC, iv or b"\0" * 16).decrypt(data[: len(data) // 16 * 16])
+        return index, data
 
-    def fetch(index_url: tuple[int, str]) -> tuple[int, bytes]:
-        index, segment_url = index_url
-        for attempt in range(3):
-            try:
-                data = client.get(segment_url, referer).content
-                if not data or data.startswith((b"<!DOCTYPE", b"<html")):
-                    raise RuntimeError("segment response was not media")
-                if key:
-                    data = AES.new(key, AES.MODE_CBC, iv or b"\0" * 16).decrypt(data[: len(data) // 16 * 16])
-                return index, data
-            except (RequestException, OSError, RuntimeError, ValueError):
-                if attempt == 2:
-                    raise
-                time.sleep(attempt + 1)
-        raise RuntimeError(f"failed to download segment {index}")
+    chunks: dict[int, bytes] = {}
+    with ThreadPoolExecutor(max_workers=THREADS) as pool:
+        futures = [pool.submit(fetch, item) for item in enumerate(segments)]
+        for future in as_completed(futures):
+            index, data = future.result()
+            chunks[index] = data
+            progress()
 
-    try:
-        with ThreadPoolExecutor(max_workers=THREADS) as pool:
-            futures = [pool.submit(fetch, item) for item in enumerate(segments)]
-            for future in as_completed(futures):
-                index, data = future.result()
-                (temporary / f"{index:06d}.ts").write_bytes(data)
-                progress()
-        output.parent.mkdir(parents=True, exist_ok=True)
-        partial = output.with_suffix(output.suffix + ".part")
-        with partial.open("wb") as destination:
-            for index in range(len(segments)):
-                segment = temporary / f"{index:06d}.ts"
-                if not segment.exists():
-                    raise RuntimeError(f"missing segment {index}")
-                with segment.open("rb") as source:
-                    shutil.copyfileobj(source, destination)
-        partial.replace(output)
-    finally:
-        shutil.rmtree(temporary, ignore_errors=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    partial = output.with_suffix(output.suffix + ".part")
+    with partial.open("wb") as destination:
+        for index in range(len(segments)):
+            destination.write(chunks[index])
+    partial.replace(output)
 
 
 def display(stdscr, title: str, items: list[str], multi: bool = False) -> list[int] | None:
@@ -303,7 +278,13 @@ def display(stdscr, title: str, items: list[str], multi: bool = False) -> list[i
             marker = ">" if index == cursor else " "
             check = "[x] " if index in selected else "[ ] " if multi else ""
             stdscr.addnstr(row, 0, f"{marker} {check}{items[index]}", width - 1)
-        stdscr.addnstr(height - 1, 0, "Up/Down navigate  Space select  Enter confirm  Esc quit", width - 1, curses.A_DIM)
+        stdscr.addnstr(
+            height - 1,
+            0,
+            "Up/Down navigate  Space select  Enter confirm  Esc quit",
+            width - 1,
+            curses.A_DIM,
+        )
         stdscr.refresh()
         key = stdscr.getch()
         if key in (curses.KEY_UP, ord("k")):
@@ -361,7 +342,11 @@ def run(stdscr) -> None:
         def progress(number=number, filename=filename) -> None:
             nonlocal done
             done += 1
-            print(f"\rDownloading {number}/{len(episode_indexes)}: {filename} ({done} segments)", end="", flush=True)
+            print(
+                f"\rDownloading {number}/{len(episode_indexes)}: {filename} ({done} segments)",
+                end="",
+                flush=True,
+            )
 
         download(client, playlist, target, stream["url"], progress)
         print(f"\nDownloaded {target}")
@@ -382,7 +367,7 @@ def safe_name(value: str) -> str:
 def main() -> None:
     try:
         curses.wrapper(run)
-    except (ChallengeError, RuntimeError) as error:
+    except RuntimeError as error:
         print(f"Error: {error}")
     except KeyboardInterrupt:
         print("\nCancelled")
