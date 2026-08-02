@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import curses
-import os
 import re
 import shutil
 import sqlite3
@@ -15,14 +14,13 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 try:
-    from curl_cffi import CurlOpt
-    from curl_cffi.requests import Session
     from bs4 import BeautifulSoup
     from Crypto.Cipher import AES
+    from curl_cffi import CurlOpt
+    from curl_cffi.requests import Session
+    from curl_cffi.requests.exceptions import RequestException
 except ImportError as exc:
-    raise SystemExit(
-        "Missing dependency. Run: .venv/bin/python -m pip install -r requirements.txt"
-    ) from exc
+    raise SystemExit("Missing dependency. Run: .venv/bin/python -m pip install -r requirements.txt") from exc
 
 
 BASE_URL = "https://animepahe.pw"
@@ -55,10 +53,7 @@ def firefox_cookies() -> tuple[dict[str, str], dict[str, str]]:
         copy = Path(directory) / "cookies.sqlite"
         shutil.copy2(database, copy)
         with sqlite3.connect(copy) as connection:
-            rows = connection.execute(
-                "SELECT host, name, value FROM moz_cookies "
-                "WHERE host LIKE '%animepahe%' OR host LIKE '%kwik%'"
-            )
+            rows = connection.execute("SELECT host, name, value FROM moz_cookies WHERE host LIKE '%animepahe%' OR host LIKE '%kwik%'")
             for host, name, value in rows:
                 if "kwik" in host:
                     kwik[name] = value
@@ -69,7 +64,8 @@ def firefox_cookies() -> tuple[dict[str, str], dict[str, str]]:
 
 def cookie_header(url: str) -> str:
     animepahe, kwik = firefox_cookies()
-    cookies = kwik if "kwik" in urlparse(url).hostname.lower() else animepahe
+    hostname = urlparse(url).hostname or ""
+    cookies = kwik if "kwik" in hostname.lower() else animepahe
     return "; ".join(f"{name}={value}" for name, value in cookies.items())
 
 
@@ -101,13 +97,7 @@ class Client:
                 )
                 body = response.content
                 body_lower = body.lower()
-                challenge = (
-                    response.status_code == 403
-                    or response.headers.get("cf-mitigated") == "challenge"
-                    or b"<title>just a moment" in body_lower
-                    or b"cf-chl-widget" in body_lower
-                    or b"challenge-error-text" in body_lower
-                )
+                challenge = response.status_code == 403 or response.headers.get("cf-mitigated") == "challenge" or b"<title>just a moment" in body_lower or b"cf-chl-widget" in body_lower or b"challenge-error-text" in body_lower
                 if challenge:
                     raise ChallengeError("AnimePahe returned a Cloudflare challenge")
                 if response.status_code == 200 or raw:
@@ -115,7 +105,7 @@ class Client:
                 last_error = RuntimeError(f"HTTP {response.status_code}: {url}")
             except ChallengeError:
                 raise
-            except Exception as exc:
+            except (RequestException, OSError, RuntimeError) as exc:
                 last_error = exc
             if attempt < 2:
                 time.sleep(attempt + 1)
@@ -152,22 +142,29 @@ def stream_links(client: Client, anime_session: str, episode_session: str) -> li
     links = []
     for tag in soup.find_all(["a", "button"]):
         target = tag.get("href") or tag.get("src") or tag.get("data-src") or tag.get("data-url")
-        if not target or "kwik" not in target.lower():
+        if not isinstance(target, str) or "kwik" not in target.lower():
             continue
         label = tag.get_text(" ", strip=True)
-        match = re.search(r"(\d{3,4}p)", label or target, re.I)
-        links.append({
-            "url": target,
-            "quality": match.group(1).lower() if match else "unknown",
-            "audio": "dub" if "dub" in label.lower() else "sub",
-        })
+        match = re.search(r"(\d{3,4}p)", label or target, re.IGNORECASE)
+        links.append(
+            {
+                "url": target,
+                "quality": match.group(1).lower() if match else "unknown",
+                "audio": "dub" if "dub" in label.lower() else "sub",
+            }
+        )
     unique = {link["url"]: link for link in links}
     return list(unique.values())
 
 
 def choose_stream(links: list[dict]) -> dict:
     preferred = [link for link in links if link["audio"] == "sub"] or links
-    return max(preferred, key=lambda link: int(re.search(r"\d+", link["quality"]).group()) if re.search(r"\d+", link["quality"]) else 0)
+
+    def quality_number(link: dict) -> int:
+        match = re.search(r"\d+", link["quality"])
+        return int(match.group()) if match else 0
+
+    return max(preferred, key=quality_number)
 
 
 def unpack_js(payload: str, base: int, count: int, words: list[str]) -> str:
@@ -194,7 +191,7 @@ def m3u8_url(client: Client, kwik: str, referer: str) -> str:
     if direct:
         return direct.group().rstrip("\\'\"")
     soup = BeautifulSoup(html, "html.parser")
-    packed = re.compile(r"\}\s*\('(.*?)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'(.*?)'", re.S)
+    packed = re.compile(r"\}\s*\('(.*?)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'(.*?)'", re.DOTALL)
     for script in soup.find_all("script"):
         for match in packed.finditer(script.string or ""):
             decoded = unpack_js(match.group(1), int(match.group(2)), int(match.group(3)), match.group(4).split("|"))
@@ -232,7 +229,8 @@ def select_variant(client: Client, url: str, text: str, referer: str) -> tuple[s
     for index, line in enumerate(lines[:-1]):
         if "#EXT-X-STREAM-INF" not in line:
             continue
-        bandwidth = int(re.search(r"BANDWIDTH=(\d+)", line).group(1)) if re.search(r"BANDWIDTH=(\d+)", line) else 0
+        bandwidth_match = re.search(r"BANDWIDTH=(\d+)", line)
+        bandwidth = int(bandwidth_match.group(1)) if bandwidth_match else 0
         if bandwidth > best_bandwidth:
             best_bandwidth = bandwidth
             best_url = urljoin(url, lines[index + 1].strip())
@@ -259,15 +257,16 @@ def download(client: Client, url: str, output: Path, referer: str, progress) -> 
         for attempt in range(3):
             try:
                 data = client.get(segment_url, referer).content
-                if not data or data.startswith(b"<!DOCTYPE") or data.startswith(b"<html"):
+                if not data or data.startswith((b"<!DOCTYPE", b"<html")):
                     raise RuntimeError("segment response was not media")
                 if key:
                     data = AES.new(key, AES.MODE_CBC, iv or b"\0" * 16).decrypt(data[: len(data) // 16 * 16])
                 return index, data
-            except Exception:
+            except (RequestException, OSError, RuntimeError, ValueError):
                 if attempt == 2:
                     raise
                 time.sleep(attempt + 1)
+        raise RuntimeError(f"failed to download segment {index}")
 
     try:
         with ThreadPoolExecutor(max_workers=THREADS) as pool:
@@ -359,7 +358,7 @@ def run(stdscr) -> None:
             continue
         done = 0
 
-        def progress() -> None:
+        def progress(number=number, filename=filename) -> None:
             nonlocal done
             done += 1
             print(f"\rDownloading {number}/{len(episode_indexes)}: {filename} ({done} segments)", end="", flush=True)
