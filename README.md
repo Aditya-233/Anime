@@ -1,45 +1,40 @@
-# AnimePahe 🚀
+# AnimePahe
 
-> An ultra-fast, lightweight, and keyboard-driven AnimePahe downloader & TUI for Linux.
+Minimal interactive AnimePahe downloader.
 
-[![Language](https://img.shields.io/badge/language-Rust-orange.svg?style=flat-square)](https://www.rust-lang.org)
-[![TUI Framework](https://img.shields.io/badge/TUI-Ratatui%200.30-red.svg?style=flat-square)](https://ratatui.rs)
-[![Binary Size](https://img.shields.io/badge/binary--size-3.7_MB-blueviolet.svg?style=flat-square)](#)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-lightgrey.svg?style=flat-square)](#)
+## Setup
 
-**AnimePahe** brings a streamlined, multi-pane terminal interface to searching and downloading anime episodes. Combining concurrent multi-threaded segment fetching, in-place AES-128 stream decryption, and real-time speed monitoring, it delivers an optimized, lightweight console experience built entirely in Rust.
-
----
-
-## ✨ Key Features
-
-- ⚡ **Concurrent HLS Segment Fetcher:** Parallel `.ts` segment downloads with Tokio async worker pools.
-- 🔐 **In-Place AES-128 Decryption:** Seamless decryption for encrypted stream segments.
-- 🎨 **Catppuccin Mocha Styling:** Vibrant, readable layout with dedicated panels for search, episodes, downloads, and keybindings.
-- 💾 **Persistent Download Cache:** Auto-saves completed and active downloads to `~/.cache/animepahe/history.json`.
-- 🛠️ **Automatic FFmpeg Integration:** Transparently merges segments into `.mp4` using FFmpeg (with fallback to direct binary concatenation).
-
----
-
-## 🎮 Keyboard Controls
-
-| Key         | Action                                                                                                               |
-| :---------- | :------------------------------------------------------------------------------------------------------------------- |
-| `Tab`       | Cycle focus between panels (`QueryInput` $\rightarrow$ `Results` $\rightarrow$ `Episodes` $\rightarrow$ `Downloads`) |
-| `Shift+Tab` | Cycle focus backward                                                                                                 |
-| `Enter`     | Trigger search (when query is focused) or select anime / start episode download                                      |
-| `↑` / `↓`   | Navigate active table rows                                                                                           |
-| `?`         | Toggle keybindings help overlay modal                                                                                |
-| `Esc` / `q` | Close help popup or exit application                                                                                 |
-
----
-
-## 🏗️ Building from Source
+From this directory:
 
 ```bash
-# Build optimized release binary
-cargo build --release
-
-# Run binary directly
-./animepahe
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
+
+## Run
+
+```bash
+.venv/bin/python animepahe.py
+```
+
+The program asks for an anime, lets you navigate search results, then lets you
+multi-select episodes with `Space`. Press `Enter` to download selected episodes.
+
+Downloads are stored in:
+
+```text
+~/Downloads/<Anime Title>/
+```
+
+Controls:
+
+```text
+Up/Down  Navigate
+Space    Select or deselect an episode
+Enter    Confirm
+Esc/q    Quit
+```
+
+The downloader reads Firefox cookies from the active profile and uses them for
+AnimePahe and Kwik access. If Cloudflare presents a new challenge, open both
+sites in Firefox, complete verification, and run the downloader again.
