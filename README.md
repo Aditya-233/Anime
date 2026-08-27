@@ -1,30 +1,68 @@
 # AnimePahe CLI Downloader & Streamer
 
-Lightweight, high-performance CLI tool to search, select, and download anime losslessly from AnimePahe directly to MP4 using `fzf`, HTTP/2 workers, sliding-window chunk fetching, on-the-fly AES decryption, and zero-copy FFmpeg streaming.
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+" />
+  <img src="https://img.shields.io/badge/Platform-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux" />
+  <img src="https://img.shields.io/badge/Code_Style-Ruff-black?style=for-the-badge&logo=ruff&logoColor=white" alt="Ruff" />
+  <img src="https://img.shields.io/badge/Type_Checked-Basedpyright-blue?style=for-the-badge" alt="Basedpyright" />
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License" />
+</p>
+
+<p align="center">
+  A lightweight, blazingly fast CLI tool to search, batch-select, and stream anime losslessly from <b>AnimePahe</b> directly to <b>MP4</b> using <code>fzf</code>, HTTP/2 concurrency, sliding-window chunk fetching, on-the-fly AES-128 decryption, and zero-copy FFmpeg streaming.
+</p>
 
 ---
 
-## Features
+## ⚡ Preview
 
-- **Interactive Fuzzy Selection:** Fast catalog search and multi-episode batch selection powered by `fzf`.
-- **Sliding-Window Concurrency:** Downloads HLS chunks in parallel with a bounded sliding window, eliminating pipe stalls and head-of-line blocking.
-- **On-the-Fly AES-128 Decryption:** Seamlessly decrypts encrypted HLS segments in worker memory before streaming to FFmpeg.
-- **Direct MP4 Remuxing:** Feeds chunks directly into FFmpeg's `stdin` pipe without intermediate `.ts` files on disk.
-- **Background Episode Prefetching:** Resolves stream metadata and keys for the next episode in the background while the current episode downloads.
-- **Resilient Retry Mechanism:** Full-jitter exponential backoff on network drops, HTTP 429 rate limits, and server hiccups.
-- **Zero-Friction Cookie Extraction:** Automatically reads isolated session cookies directly from your active Firefox profile.
+```text
+🌸 Select Anime > Spy x Family
+> [1/8] Spy x Family
+  [2/8] Spy x Family Part 2
+  [3/8] Spy x Family Season 2
+  [4/8] Spy x Family Code: White
+
+🌸 Episodes (Spy x Family) >
+> [Tab/Shift-Tab] Select Multiple  |  [Enter] Confirm
+> [x] Episode 001
+  [x] Episode 002
+  [ ] Episode 003
+
+󰇚 [1/2] Spy x Family - E001 [1080p].mp4... [████████████████████] 100% (146/146)
+✔ Downloaded: Spy x Family - E001 [1080p].mp4
+```
 
 ---
 
-## Prerequisites
+## ✨ Features
 
-- **Python:** 3.10 or newer
-- **FFmpeg:** Installed and available in `$PATH` (`/usr/bin/ffmpeg`)
-- **fzf:** Installed and available in `$PATH` (`/usr/bin/fzf`)
+- **🎯 Interactive Fuzzy Selection:** Rapid catalog search and multi-episode batch selection powered by `fzf`.
+- **🚀 Sliding-Window Concurrency:** Downloads HLS chunks in parallel with a dynamic sliding window, eliminating pipe stalls, buffer starvation, and head-of-line blocking.
+- **🔐 On-the-Fly AES-128-CBC Decryption:** Decrypts encrypted stream segments directly in worker memory with zero disk overhead.
+- **📼 Direct MP4 Pipe Streaming:** Feeds raw video directly into FFmpeg's `stdin` pipe without intermediate `.ts` file generation.
+- **⚡ Seamless Background Prefetching:** Resolves stream metadata and keys for the next episode in the background while the current episode downloads.
+- **🛡️ Resilient Network Engine:** Full-jitter exponential backoff on network drops, HTTP 429 rate limits, and server glitches.
+- **🍪 Zero-Friction Cookie Extraction:** Automatically reads isolated session cookies directly from your active Firefox profile (`cookies.sqlite`) using read-only immutable SQLite connections.
 
 ---
 
-## Setup
+## 📦 Prerequisites
+
+Ensure the following tools are installed on your system:
+
+- **Python:** `3.10` or higher
+- **FFmpeg:** `/usr/bin/ffmpeg`
+- **fzf:** `/usr/bin/fzf`
+
+On Arch Linux:
+```bash
+sudo pacman -S python ffmpeg fzf
+```
+
+---
+
+## 🛠️ Installation
 
 ```bash
 # Clone the repository
@@ -41,30 +79,30 @@ pip install -r requirements.txt
 
 ---
 
-## Usage
+## 🎮 Usage
 
 ```bash
-# Interactive prompt
+# Interactive mode
 python animepahe.py
 
-# Or pass the search query directly as an argument
-python animepahe.py "Spy x Family"
+# Or pass a search query directly
+python animepahe.py "Frieren"
 ```
 
 ### Controls
 
 | Key | Action |
-| --- | --- |
-| `↑` / `↓` | Navigate items |
+| :--- | :--- |
+| `↑` / `↓` | Navigate list |
 | `Tab` / `Shift-Tab` | Select / deselect multiple episodes |
-| `Enter` | Confirm selection |
-| `Esc` / `Ctrl-C` | Exit |
+| `Enter` | Confirm selection and begin download |
+| `Esc` / `Ctrl-C` | Cancel / Exit |
 
 ---
 
-## Output
+## 📂 Output Location
 
-Downloaded videos are saved losslessly to:
+All downloaded videos are losslessly packaged and saved to:
 
 ```text
 ~/Downloads/<Anime Title>/<Anime Title> - E<Episode> [<Quality>].mp4
@@ -72,6 +110,13 @@ Downloaded videos are saved losslessly to:
 
 ---
 
-## Cloudflare / Protection Notice
+## 🛡️ Cloudflare Notice
 
 The downloader extracts cookies directly from the active Firefox profile (`cookies.sqlite`). If AnimePahe or Kwik triggers a Cloudflare challenge, simply open the site once in Firefox, pass the verification, and run the script again.
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
+

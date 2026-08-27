@@ -33,21 +33,15 @@ if TYPE_CHECKING:
 # Hardcoded System Constants
 BASE_URL: str = "https://animepahe.pw"
 DOWNLOAD_DIR: Path = Path("/home/aditya/Downloads")
-COOKIES_DB: Path = Path(
-    "/home/aditya/.config/mozilla/firefox/ay8n5pl1.default-release/cookies.sqlite"
-)
-USER_AGENT: str = (
-    "Mozilla/5.0 (X11; Linux x86_64; rv:154.0) Gecko/20100101 Firefox/154.0"
-)
+COOKIES_DB: Path = Path("/home/aditya/.config/mozilla/firefox/ay8n5pl1.default-release/cookies.sqlite")
+USER_AGENT: str = "Mozilla/5.0 (X11; Linux x86_64; rv:154.0) Gecko/20100101 Firefox/154.0"
 FFMPEG_BIN: str = "/usr/bin/ffmpeg"
 FZF_BIN: str = "/usr/bin/fzf"
 PARALLEL_WORKERS: int = 6
 SLIDING_WINDOW_AHEAD: int = 8
 MAX_SEGMENT_RETRIES: int = 10
 
-PACKED_JS_RE: re.Pattern[str] = re.compile(
-    r"\}\s*\(\x27(.*?)\x27\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*\x27(.*?)\x27", re.DOTALL
-)
+PACKED_JS_RE: re.Pattern[str] = re.compile(r"\}\s*\(\x27(.*?)\x27\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*\x27(.*?)\x27", re.DOTALL)
 
 
 def get_cookies_map() -> tuple[dict[str, str], dict[str, str]]:
@@ -58,9 +52,7 @@ def get_cookies_map() -> tuple[dict[str, str], dict[str, str]]:
         return pahe, kwik
 
     try:
-        with sqlite3.connect(
-            f"file:{COOKIES_DB}?mode=ro&immutable=1", uri=True
-        ) as conn:
+        with sqlite3.connect(f"file:{COOKIES_DB}?mode=ro&immutable=1", uri=True) as conn:
             query = "SELECT host, name, value FROM moz_cookies WHERE host LIKE '%animepahe%' OR host LIKE '%kwik%' ORDER BY lastAccessed ASC"
             rows: list[tuple[str, str, str]] = conn.execute(query).fetchall()
             for host, name, val in rows:
@@ -126,12 +118,8 @@ def fzf_select(items: list[str], prompt: str, *, multi: bool = False) -> list[st
         "--border",
     ]
     if multi:
-        cmd.extend(
-            ["-m", "--header", "[Tab/Shift-Tab] Select Multiple  |  [Enter] Confirm"]
-        )
-    proc = subprocess.run(
-        cmd, input="\n".join(items), text=True, capture_output=True, check=False
-    )
+        cmd.extend(["-m", "--header", "[Tab/Shift-Tab] Select Multiple  |  [Enter] Confirm"])
+    proc = subprocess.run(cmd, input="\n".join(items), text=True, capture_output=True, check=False)
     if proc.returncode != 0 or not proc.stdout.strip():
         return []
     return [l.strip() for l in proc.stdout.splitlines() if l.strip()]
@@ -159,13 +147,9 @@ def _jitter(attempt: int, cap: float = 2.0, base: float = 0.2) -> float:
     return min(cap, base * (1 << attempt)) + random.uniform(0.05, 0.2)
 
 
-def resolve_stream_metadata(
-    client: Client, anime_session: str, ep_session: str
-) -> dict[str, object]:
+def resolve_stream_metadata(client: Client, anime_session: str, ep_session: str) -> dict[str, object]:
     """Fetch play page, decode player JS, and retrieve M3U8 playlist + AES key with retries."""
-    play_html = client.get(
-        f"{BASE_URL}/play/{anime_session}/{ep_session}", referer=f"{BASE_URL}/"
-    ).text
+    play_html = client.get(f"{BASE_URL}/play/{anime_session}/{ep_session}", referer=f"{BASE_URL}/").text
 
     kwik_match = (
         re.search(
@@ -217,11 +201,7 @@ def resolve_stream_metadata(
         msg = "Failed to fetch valid m3u8 playlist after retries."
         raise RuntimeError(msg)
 
-    segments = [
-        line
-        for line in playlist_text.splitlines()
-        if line and not line.startswith("#") and line.startswith("http")
-    ]
+    segments = [line for line in playlist_text.splitlines() if line and not line.startswith("#") and line.startswith("http")]
     key_match = re.search(r'URI="([^"]+)"', playlist_text)
     key: bytes | None = None
     if key_match:
@@ -241,9 +221,7 @@ def resolve_stream_metadata(
     }
 
 
-def stream_to_mp4(
-    client: Client, meta: dict[str, object], output_path: Path, progress_label: str
-) -> None:
+def stream_to_mp4(client: Client, meta: dict[str, object], output_path: Path, progress_label: str) -> None:
     """Download HLS segments with sliding window and stream into FFmpeg without pipe stalls."""
     kwik_url = str(meta.get("kwik_url", "https://kwik.cx/"))
     segments = cast(list[str], meta.get("segments", []))
@@ -288,12 +266,7 @@ def stream_to_mp4(
         for attempt in range(MAX_SEGMENT_RETRIES):
             try:
                 resp = client.session.get(seg_url, headers=headers, timeout=20)
-                if (
-                    resp.status_code == 200
-                    and resp.content
-                    and not resp.content.startswith(b"<!")
-                    and not resp.content.startswith(b"<html")
-                ):
+                if resp.status_code == 200 and resp.content and not resp.content.startswith(b"<!") and not resp.content.startswith(b"<html"):
                     data = resp.content
                     if key:
                         cipher: CbcMode = AES.new(key, AES.MODE_CBC, seg_iv)
@@ -308,9 +281,7 @@ def stream_to_mp4(
             # Full jitter exponential backoff on 429 or server errors
             time.sleep(_jitter(attempt, base=0.15, cap=2.0))
 
-        err_msg = (
-            f"Segment {index} failed to download after {MAX_SEGMENT_RETRIES} attempts."
-        )
+        err_msg = f"Segment {index} failed to download after {MAX_SEGMENT_RETRIES} attempts."
         raise RuntimeError(err_msg)
 
     ready_chunks: dict[int, bytes] = {}
@@ -322,15 +293,8 @@ def stream_to_mp4(
         active_futures: set[Future[tuple[int, bytes]]] = set()
 
         # Fill initial sliding window
-        while (
-            next_to_schedule <= total
-            and next_to_schedule < next_to_write + SLIDING_WINDOW_AHEAD
-        ):
-            active_futures.add(
-                pool.submit(
-                    fetch_segment, (next_to_schedule, segments[next_to_schedule - 1])
-                )
-            )
+        while next_to_schedule <= total and next_to_schedule < next_to_write + SLIDING_WINDOW_AHEAD:
+            active_futures.add(pool.submit(fetch_segment, (next_to_schedule, segments[next_to_schedule - 1])))
             next_to_schedule += 1
 
         while active_futures:
@@ -353,10 +317,7 @@ def stream_to_mp4(
                 next_to_write += 1
 
             # Replenish sliding window dynamically
-            while (
-                next_to_schedule <= total
-                and next_to_schedule < next_to_write + SLIDING_WINDOW_AHEAD
-            ):
+            while next_to_schedule <= total and next_to_schedule < next_to_write + SLIDING_WINDOW_AHEAD:
                 active_futures.add(
                     pool.submit(
                         fetch_segment,
@@ -379,10 +340,7 @@ def stream_to_mp4(
     if proc.returncode != 0:
         if temp_mp4.exists():
             _ = temp_mp4.unlink(missing_ok=True)
-        err_msg = (
-            f"FFmpeg failed (code {proc.returncode}): "
-            + f"{stderr.decode(errors='replace').strip()}"
-        )
+        err_msg = f"FFmpeg failed (code {proc.returncode}): " + f"{stderr.decode(errors='replace').strip()}"
         raise RuntimeError(err_msg)
     if temp_mp4.exists():
         _ = temp_mp4.replace(output_path)
@@ -393,44 +351,26 @@ def search_anime(client: Client, query: str) -> list[dict[str, str]]:
     """Search anime catalog by query."""
     resp = client.get(f"{BASE_URL}/api?m=search&q={quote(query)}")
     raw_dict: dict[str, object] = cast(dict[str, object], json.loads(resp.text))
-    items = [
-        cast(dict[str, object], x)
-        for x in cast(list[object], raw_dict.get("data") or [])
-        if isinstance(x, dict)
-    ]
-    return [
-        {"title": str(x.get("title", "Unknown")), "session": str(x.get("session", ""))}
-        for x in items
-    ]
+    items = [cast(dict[str, object], x) for x in cast(list[object], raw_dict.get("data") or []) if isinstance(x, dict)]
+    return [{"title": str(x.get("title", "Unknown")), "session": str(x.get("session", ""))} for x in items]
 
 
 def _parse_ep_page(resp_dict: dict[str, object]) -> list[dict[str, str]]:
     """Extract episode list from a single API page response dict."""
     raw = cast(list[object], resp_dict.get("data") or [])
     dicts = [cast(dict[str, object], x) for x in raw if isinstance(x, dict)]
-    return [
-        {"episode": str(x.get("episode", "1")), "session": str(x.get("session", ""))}
-        for x in dicts
-    ]
+    return [{"episode": str(x.get("episode", "1")), "session": str(x.get("session", ""))} for x in dicts]
 
 
 def get_episodes(client: Client, anime_session: str) -> list[dict[str, str]]:
     """Fetch all episodes across all release pages."""
-    first_resp = client.get(
-        f"{BASE_URL}/api?m=release&id={anime_session}&sort=episode_asc&page=1"
-    )
+    first_resp = client.get(f"{BASE_URL}/api?m=release&id={anime_session}&sort=episode_asc&page=1")
     first_dict: dict[str, object] = cast(dict[str, object], json.loads(first_resp.text))
     result = _parse_ep_page(first_dict)
 
-    last_page = (
-        int(str(first_dict.get("last_page", 1)))
-        if str(first_dict.get("last_page", "1")).isdigit()
-        else 1
-    )
+    last_page = int(str(first_dict.get("last_page", 1))) if str(first_dict.get("last_page", "1")).isdigit() else 1
     for p in range(2, last_page + 1):
-        p_resp = client.get(
-            f"{BASE_URL}/api?m=release&id={anime_session}&sort=episode_asc&page={p}"
-        )
+        p_resp = client.get(f"{BASE_URL}/api?m=release&id={anime_session}&sort=episode_asc&page={p}")
         result.extend(_parse_ep_page(cast(dict[str, object], json.loads(p_resp.text))))
     return result
 
@@ -462,9 +402,7 @@ def main() -> None:
         return
 
     ep_labels = [f"Episode {ep.get('episode', '0'):>03}".strip() for ep in episodes]
-    selected_eps = fzf_select(
-        ep_labels, f"Episodes ({anime.get('title', 'Anime')})", multi=True
-    )
+    selected_eps = fzf_select(ep_labels, f"Episodes ({anime.get('title', 'Anime')})", multi=True)
     if not selected_eps:
         return
 
@@ -479,11 +417,7 @@ def main() -> None:
     try:
         for idx, ep in enumerate(chosen, 1):
             ep_val = str(ep.get("episode", "1"))
-            ep_num = (
-                f"{float(ep_val):03.0f}"
-                if ep_val.replace(".", "", 1).isdigit()
-                else ep_val
-            )
+            ep_num = f"{float(ep_val):03.0f}" if ep_val.replace(".", "", 1).isdigit() else ep_val
             ep_sess = ep.get("session", "")
 
             # If this episode was prefetched, retrieve its resolved metadata
@@ -500,9 +434,7 @@ def main() -> None:
                 ValueError,
                 KeyError,
             ) as err:
-                print(
-                    f"\033[31m✘ Failed to resolve stream for Episode {ep_num}: {err}\033[0m"
-                )
+                print(f"\033[31m✘ Failed to resolve stream for Episode {ep_num}: {err}\033[0m")
                 next_meta_future = None
                 continue
 
@@ -515,9 +447,7 @@ def main() -> None:
             # Prefetch the next episode in background while this one downloads
             if idx < len(chosen):
                 next_ep_sess = chosen[idx].get("session", "")
-                next_meta_future = prefetch_pool.submit(
-                    resolve_stream_metadata, client, anime_session, next_ep_sess
-                )
+                next_meta_future = prefetch_pool.submit(resolve_stream_metadata, client, anime_session, next_ep_sess)
 
             label = f"[{idx}/{len(chosen)}] {out_file.name[:35]}..."
             try:
